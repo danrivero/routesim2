@@ -15,13 +15,46 @@ class Link_State_Node(Node):
 
     # Fill in this function
     def link_has_been_updated(self, neighbor, latency):
+        # new node (its seq_num = 0) -> give all information (broadcast all of your link states to them)
+        # if previous link but now its -1 (removed but now coming back in -> missed prior broadcasts)
+        # both cases: resend all info 
+
         # latency = -1 if delete a link
         if latency == -1:
             self.neighbors.remove(neighbor)
             cond_lat = float('inf')
         else:
-            self.neighbors.append(neighbor)
+            if neighbor not in self.neighbors:
+                self.neighbors.append(neighbor)
             cond_lat = latency
+
+        # create list of vertices
+        vertices = set()
+        for src, dst in self.router_graph:
+            vertices.add(src)
+            vertices.add(dst) 
+        vertices = list(vertices)
+
+        # case where new node added to neighbors
+        if (self.id, neighbor) not in self.router_graph or self.router_graph[(self.id, neighbor)] == float('inf') or neighbor not in vertices:
+            # loop thru all edges in router graph, send edges to new node
+            for edge in self.router_graph:
+                src, dst = edge
+
+                msg_body = {
+                    "src": src,
+                    "dst": dst,
+                    "visited": [self.id],
+                    "lat": cond_lat
+                }
+
+                self.router_graph[(self.id, neighbor)] = cond_lat
+                self.router_graph[(neighbor, self.id)] = cond_lat
+
+                msg_to_send = json.dumps(msg_body)
+                self.send_to_neighbor(neighbor, msg_to_send)
+                return
+
         # when link is updated, propagate new self information to neighbors
         # json message includes <origin, source, destination, sequence number, and latency>
         msg_body = {
@@ -30,6 +63,7 @@ class Link_State_Node(Node):
             "visited": [self.id],
             "lat": cond_lat
         }
+
         self.router_graph[(self.id, neighbor)] = cond_lat
         self.router_graph[(neighbor, self.id)] = cond_lat
 
@@ -45,7 +79,6 @@ class Link_State_Node(Node):
         msg = json.loads(m)
         # print(str(self.id) + " received a message from " + str(msg["origin"]))
         
-    
         new_visited = msg["visited"].copy()
         new_visited.append(self.id)
             
@@ -66,7 +99,6 @@ class Link_State_Node(Node):
         if self.id not in msg["visited"]:
             self.send_to_neighbors(send)
         
-
     # Return a neighbor, -1 if no path to destination
     def get_next_hop(self, destination):
         dsts, prvs = self.shortest_path()
@@ -85,6 +117,8 @@ class Link_State_Node(Node):
         dsts = {}
         prvs = {}
 
+        print(f"router graph: {self.router_graph}")
+
         # create list of vertices
         vertices = set()
         for src, dst in self.router_graph:
@@ -102,10 +136,13 @@ class Link_State_Node(Node):
         heapq.heapify(pq)
         for vertex in vertices:
             heapq.heappush(pq, [dsts[vertex], vertex])
+        print(f"vertices: {vertices}")
 
         while pq:
             # find minimum cost vertex
             _, min_vertex = heapq.heappop(pq)
+
+            print(min_vertex)
 
             # get all neighbors of vertex
             min_neighbors = set()
@@ -116,7 +153,7 @@ class Link_State_Node(Node):
                     min_neighbors.add(src)
             min_neighbors = list(min_neighbors)
             #print("**")
-            #print(min_neighbors)
+            print(f"min neighbors: {min_neighbors}")
             
             for neighbor in min_neighbors:
                 alt = dsts[min_vertex] + self.router_graph[(min_vertex, neighbor)]
@@ -125,14 +162,14 @@ class Link_State_Node(Node):
                     #print(alt)
                     dsts[neighbor] = alt
 
-                    i = 0
-                    for tuple in pq:
-                        _, vertex = tuple
-                        if vertex == neighbor:
-                            break
-                        i += 1
-                    pq[i][0] = alt
-                    heapq.heapify(pq)
+                    # i = 0
+                    # for tuple in pq:
+                    #     _, vertex = tuple
+                    #     if vertex == neighbor:
+                    #         break
+                    #     i += 1
+                    # pq[i][0] = alt
+                    # heapq.heapify(pq)
 
                     prvs[neighbor] = min_vertex
             
