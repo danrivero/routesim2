@@ -7,6 +7,8 @@ class Link_State_Node(Node):
     def __init__(self, id):
         super().__init__(id)
         self.router_graph = {} # adj matrix - key: (src, dst) -> val: cost
+        self.node_messages = {} # key: node id, val: seq num
+        self.seq_num = 0
 
     # Return a string
     def __str__(self):
@@ -17,8 +19,7 @@ class Link_State_Node(Node):
     def link_has_been_updated(self, neighbor, latency):
         # new node (its seq_num = 0) -> give all information (broadcast all of your link states to them)
         # if previous link but now its -1 (removed but now coming back in -> missed prior broadcasts)
-        # both cases: resend all info 
-        #print("updating link between " + str(self.id) + " and " + str(neighbor))
+        # both cases: resend all info
         # latency = -1 if delete a link
 
         if latency == -1:
@@ -29,108 +30,93 @@ class Link_State_Node(Node):
                 self.neighbors.append(neighbor)
             cond_lat = latency
 
-        self.router_graph[(self.id, neighbor)] = cond_lat
-        self.router_graph[(neighbor, self.id)] = cond_lat
-        #print(self.neighbors)
+        self.router_graph[f"{self.id},{neighbor}"] = cond_lat
+        self.router_graph[f"{neighbor},{self.id}"] = cond_lat
 
         msg_body = {
-            "src": self.id,
-            "dst": neighbor,
-            "visited": [self.id],
-            "lat": cond_lat,
-            "time": self.get_time() + 3
+            "router_graph": self.router_graph,
+            "origin": self.id,
+            "seq_num": self.seq_num
         }
+
+        self.seq_num += 1
 
         msg_to_send = json.dumps(msg_body)
         self.send_to_neighbors(msg_to_send)
-
-        # case where new node added to neighbors
-        # if (self.id, neighbor) not in self.router_graph or self.router_graph[(self.id, neighbor)] == float('inf'):
-        #     # loop thru all edges in router graph, send edges to new node
-        #     for edge in self.router_graph:
-        #         src, dst = edge
-
-        #         msg_body = {
-        #             "src": src,
-        #             "dst": dst,
-        #             "visited": [self.id],
-        #             "lat": cond_lat
-        #         }
-
-        #         self.router_graph[(self.id, neighbor)] = cond_lat
-        #         self.router_graph[(neighbor, self.id)] = cond_lat
-
-        #         msg_to_send = json.dumps(msg_body)
-        #         self.send_to_neighbor(neighbor, msg_to_send)
-        # else:
-
-        #     # when link is updated, propagate new self information to neighbors
-        #     # json message includes <origin, source, destination, sequence number, and latency>
-        #     msg_body = {
-        #         "src": self.id,
-        #         "dst": neighbor,
-        #         "visited": [self.id],
-        #         "lat": cond_lat
-        #     }
-
-        #     self.router_graph[(self.id, neighbor)] = cond_lat
-        #     self.router_graph[(neighbor, self.id)] = cond_lat
-
-        #     #print("this is the current graph of " + str(self.id))
-        #     #print(self.router_graph)
-            
-        #     msg_to_send = json.dumps(msg_body)
-        #     self.send_to_neighbors(msg_to_send)
 
     # Fill in this function
     def process_incoming_routing_message(self, m):
         # when receiving updated info, forward it to all neighbors
         msg = json.loads(m)
         # print(str(self.id) + " received a message from " + str(msg["origin"]))
-        self.router_graph[(msg["src"], msg["dst"])] = msg["lat"]
-        self.router_graph[(msg["dst"], msg["src"])] = msg["lat"]
-        
-        if self.id in msg["visited"] or msg["time"] < self.get_time(): 
-            return
+        routing_table = msg["router_graph"]
+        origin = msg["origin"]
+        seq_num = msg["seq_num"]
 
-        new_visited = msg["visited"].copy()
-        new_visited.append(self.id)
+        for edge in routing_table:
+            src, dst = map(int, edge.split(","))
+            self.router_graph[f"{src},{dst}"] = routing_table[edge]
+            self.router_graph[f"{dst},{src}"] = routing_table[edge]
+
+        # if self.id in msg["visited"]: 
+        #     return
+
+        # new_visited = msg["visited"].copy()
+        # new_visited.append(self.id)
             
+        # msg_body = {
+        #     "src": msg["src"],
+        #     "dst": msg["dst"],
+        #     "visited": new_visited,
+        #     "lat": msg["lat"]
+        # }
+        if origin in self.node_messages and seq_num <= self.node_messages[origin]:
+            return
+        
+        self.node_messages[origin] = seq_num
+
         msg_body = {
-            "src": msg["src"],
-            "dst": msg["dst"],
-            "visited": new_visited,
-            "lat": msg["lat"],
-            "time": msg["time"]
+            "router_graph": self.router_graph,
+            "origin": origin,
+            "seq_num": seq_num
         }
+        
         send = json.dumps(msg_body)
         self.send_to_neighbors(send)
 
         # print("this is the current graph of " + str(self.id))
         # print(self.router_graph)
         
-        for edge in self.router_graph:
-            src, dst = edge
-            msg_body = {
-                "src": src,
-                "dst": dst,
-                "visited": [self.id],
-                "lat": self.router_graph[(src, dst)],
-                "time": msg["time"]
-            }
-            send = json.dumps(msg_body)
-            self.send_to_neighbors(send)
+        # for edge in self.router_graph:
+        #     src, dst = edge
+        #     msg_body = {
+        #         "src": src,
+        #         "dst": dst,
+        #         "visited": [self.id],
+        #         "lat": self.router_graph[(src, dst)],
+        #         "time": msg["time"]
+        #     }
+        #     send = json.dumps(msg_body)
+        #     self.send_to_neighbors(send)
+        
+        # msg_body = {
+        #     "router_graph": self.router_graph,
+        #     "visited": new_visited
+        # }
+        # send = json.dumps(msg_body)
+        # self.send_to_neighbors(send)
         
     # Return a neighbor, -1 if no path to destination
     def get_next_hop(self, destination):
         dsts, prvs = self.shortest_path()
         if destination not in dsts or dsts[destination] == float('inf'):
-            print("failure")
+            # print("failure")
             return -1
         
         curr = destination
         while prvs[curr] is not self.id:
             curr = prvs[curr]
+            # print("get next hop")
         return curr
 
     def shortest_path(self):
@@ -139,7 +125,8 @@ class Link_State_Node(Node):
 
         # create list of vertices
         vertices = set()
-        for src, dst in self.router_graph:
+        for edge in self.router_graph:
+            src, dst = map(int, edge.split(","))
             vertices.add(src)
             vertices.add(dst) 
         vertices = list(vertices)
@@ -154,17 +141,18 @@ class Link_State_Node(Node):
         heapq.heapify(pq)
         for vertex in vertices:
             heapq.heappush(pq, [dsts[vertex], vertex])
-        print(f"vertices: {vertices}")
+        # print(f"vertices: {vertices}")
 
         while pq:
             # find minimum cost vertex
             _, min_vertex = heapq.heappop(pq)
 
-            print(min_vertex)
+            # print(min_vertex)
 
             # get all neighbors of vertex
             min_neighbors = set()
-            for src, dst in self.router_graph:
+            for edge in self.router_graph:
+                src, dst = map(int, edge.split(","))
                 if src == min_vertex:
                     min_neighbors.add(dst)
                 elif dst == min_vertex:
@@ -174,7 +162,7 @@ class Link_State_Node(Node):
             #print(f"min neighbors: {min_neighbors}")
             
             for neighbor in min_neighbors:
-                alt = dsts[min_vertex] + self.router_graph[(min_vertex, neighbor)]
+                alt = dsts[min_vertex] + self.router_graph[f"{min_vertex},{neighbor}"]
                 if alt < dsts[neighbor]:
                     #print("***")
                     #print(alt)
