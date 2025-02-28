@@ -66,8 +66,6 @@ class Link_State_Node(Node):
         origin = msg["origin"]
         seq_num = msg["seq_num"]
 
-        # self.router_graph.update(routing_table)
-
         if origin in self.node_messages and seq_num <= self.node_messages[origin]:
             return
         self.node_messages[origin] = seq_num
@@ -101,40 +99,16 @@ class Link_State_Node(Node):
             
             send = json.dumps(msg_body)
             self.send_to_neighbors(send)
-
-        # print("this is the current graph of " + str(self.id))
-        # print(self.router_graph)
-        
-        # for edge in self.router_graph:
-        #     src, dst = edge
-        #     msg_body = {
-        #         "src": src,
-        #         "dst": dst,
-        #         "visited": [self.id],
-        #         "lat": self.router_graph[(src, dst)],
-        #         "time": msg["time"]
-        #     }
-        #     send = json.dumps(msg_body)
-        #     self.send_to_neighbors(send)
-        
-        # msg_body = {
-        #     "router_graph": self.router_graph,
-        #     "visited": new_visited
-        # }
-        # send = json.dumps(msg_body)
-        # self.send_to_neighbors(send)
         
     # Return a neighbor, -1 if no path to destination
     def get_next_hop(self, destination):
         dsts, prvs = self.shortest_path()
         if destination not in dsts or dsts[destination] == float('inf'):
-            # print("failure")
             return -1
         
         curr = destination
         while prvs[curr] != self.id:
             curr = prvs[curr]
-            # print("get next hop")
         return curr
 
     def shortest_path(self):
@@ -146,7 +120,7 @@ class Link_State_Node(Node):
         for edge in self.router_graph:
             src, dst = map(int, edge.split(","))
             vertices.add(src)
-            vertices.add(dst) 
+            vertices.add(dst)
 
         for vertex in vertices:
             dsts[vertex] = float('inf')
@@ -158,13 +132,10 @@ class Link_State_Node(Node):
         heapq.heapify(pq)
         for vertex in vertices:
             heapq.heappush(pq, [dsts[vertex], vertex])
-        # print(f"vertices: {vertices}")
 
         while pq:
             # find minimum cost vertex
             _, min_vertex = heapq.heappop(pq)
-
-            # print(min_vertex)
 
             # get all neighbors of vertex
             min_neighbors = set()
@@ -174,15 +145,10 @@ class Link_State_Node(Node):
                     min_neighbors.add(dst)
                 elif dst == min_vertex:
                     min_neighbors.add(src)
-            # min_neighbors = list(min_neighbors)
-            #print("**")
-            #print(f"min neighbors: {min_neighbors}")
             
             for neighbor in min_neighbors:
                 alt = dsts[min_vertex] + self.router_graph[f"{min_vertex},{neighbor}"]
                 if alt < dsts[neighbor]:
-                    #print("***")
-                    #print(alt)
                     dsts[neighbor] = alt
 
                     # i = 0
