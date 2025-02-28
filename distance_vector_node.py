@@ -5,193 +5,161 @@ import json
 class Distance_Vector_Node(Node):
     def __init__(self, id):
         super().__init__(id)
-        self.distance_vectors = {} # key: neighbor (int), val: (cost, next_hop) 
-        self.edges = {} # key: (src, dst) (tuple of ints), val: cost (int)
-        self.all_dvs = {} # key: neighbor (int), val: (timestamp, neighbor's DV)
-        self.timestamp = 0
-        self.distance_vectors[self.id] = (0, [])
+        self.distance_vector = {}   # key: node id          value: (cost of shortest path, shortest path list)
+        self.outbound_links = {}    # key: neighbor id      value: cost to get to neighbor
+        self.neighbor_DVs = {}      # key: neighbor id      value: (timestamp, most recent DV)
+        
+        self.distance_vector[self.id] = (0, [self.id])
 
     # Return a string
     def __str__(self):
-        output = "Node " + str(self.id) + ": " + str(self.neighbors) + ", " + str(self.distance_vectors)
+        output = "Node " + str(self.id) + ": " + str(self.neighbors) + ", " + str(self.distance_vector)
         return output
 
     # Fill in this function
     def link_has_been_updated(self, neighbor, latency):
-        # latency = -1 if delete a link
+        # if latency == -1, delete link
         if latency == -1:
-            if neighbor in self.neighbors:
-                self.neighbors.remove(neighbor)
-
-            self.edges.pop(frozenset({self.id, neighbor}), None)
-
-            # msg_body = {
-            #     "origin": self.id,
-            #     "deleted_link": f"{self.id},{neighbor}"
-            # }
-
-            # msg_to_send = json.dumps(msg_body)
-            # self.send_to_neighbors(msg_to_send)
+            print("latency is -1")
             return
         
+        # update outbound links
+        self.outbound_links[neighbor] = latency
+
+        # intialize neighbor in neighbors 
         if neighbor not in self.neighbors:
             self.neighbors.append(neighbor)
 
-        edge = frozenset({self.id, neighbor})
-        self.edges[edge] = latency
-        self.distance_vectors[neighbor] = (latency, [neighbor])
+        # initialize neighbor in DV (if not already in it)
+        if neighbor not in self.distance_vector:
+            self.distance_vector[neighbor] = (latency, [self.id, neighbor])
 
+        # find shortest path to neighbor (either take existing path or new link)
+        if neighbor not in self.neighbor_DVs:
+            prev_cost = self.distance_vector[neighbor][0]
+            new_cost = self.outbound_links[neighbor]
+            if new_cost < prev_cost:
+                self.distance_vector[neighbor] = (new_cost, [self.id, neighbor])
+
+            assumed_dv = {}
+            for node in self.distance_vector.keys():
+                path = self.distance_vector[node][1]
+                assumed_dv[node] = (float('inf'), path)
+
+            self.neighbor_DVs[neighbor] = (self.get_time(), assumed_dv)
+    
+        # recalculate whole DV (outbound links changed)
+        for node in self.distance_vector:
+            if node != neighbor and node != self.id:
+                cost, path = self.get_next_hop(node)
+                self.distance_vector[node] = (cost, path)
+
+        # send msg to neighbors
         msg_body = {
             "sender": self.id,
-            "origin": self.id,
-            "DV": self.distance_vectors,
+            "sent_dv": self.distance_vector,
             "timestamp": self.get_time(),
-            "neighbor": neighbor,
-            "latency": latency
+            "deleted_link": None
         }
-
+        
         msg_to_send = json.dumps(msg_body)
         self.send_to_neighbors(msg_to_send)
 
     # Fill in this function
     def process_incoming_routing_message(self, m):
-        no_changes = True
+        # parse incoming message
         msg = json.loads(m)
-        
-        # extract headers from msg
-        sender = msg["sender"] 
-        origin = msg["origin"]
-        DV = {int(k): v for k, v in msg["DV"].items()}
-        neighbor = msg["neighbor"]
-        latency = msg["latency"]
+        sender = msg["sender"]
+        received_dv = {int(k): v for k, v in msg["sent_dv"].items()}
         timestamp = msg["timestamp"]
-
-        # if we're receiving a neighbor's DV, store it
-        # if (sender == origin or origin in self.neighbors) and (origin in self.neighbor_dvs and DV != self.neighbor_dvs[origin]):
-        if sender not in self.all_dvs or self.all_dvs[sender][1] != DV or timestamp > self.all_dvs[sender][0]:
-            if sender not in self.all_dvs:
-                1+1
-            elif self.all_dvs[sender][1] != DV:
-                print("start")
-                print(DV)
-                print(self.all_dvs[sender])
-            no_changes = False
-            self.all_dvs[sender] = (timestamp, DV)
-
-        # check if its a neighbor (before for loop), set its cost in self.distance_vectors immediately
-        if sender in self.neighbors:
-            self.distance_vectors[sender] = (self.edges[frozenset({self.id, sender})], [sender])
+        deleted_link = msg["deleted_link"]
         
-        # check if there are changes
-        # edge = frozenset({origin, neighbor})
-        # if edge not in self.edges or self.edges[edge] != latency:
-        #     no_changes = False
-        #     self.edges[edge] = latency
+        # discard msg if it's old
+        if sender in self.neighbor_DVs and self.neighbor_DVs[sender][0] > timestamp:
+            return
+        
+        # updating neighbor DVs w/ most current DV (didn't trigger previous if statement)
+        self.neighbor_DVs[sender] = (timestamp, received_dv)
 
-        for node in DV:
-            # case 1: node not in self's DV
-            # if node not in self.distance_vectors:
-            #     no_changes = False
-            #     self.distance_vectors[node] = (DV[node][0] + latency, self.get_next_hop(node))
-                
-            # case 2: potential path is shorter than current one in self's DV
-            # print(node)
-            # print(sender)
-            # potential_path = DV[node][0] + self.distance_vectors[sender][0]
-            # if potential_path < self.distance_vectors[node][0]:
-            #     no_changes = False
-            #     self.distance_vectors[node] = (potential_path, sender)   
-            received_cost = DV[node][0]
-            link_cost = self.edges.get(frozenset({self.id, sender}), float('inf'))
+        # handle deleted link msg
+        if deleted_link is not None:
+            print("link should be deleted")
+            return
+        
+        
+        # initialize sender in DV (if not already in it)
+        latency = received_dv[self.id][0]
+        if sender not in self.distance_vector:
+            self.distance_vector[sender] = (latency, [self.id, sender])
+        
+        if sender not in self.outbound_links:
+            self.outbound_links[sender] = latency
 
-            if node == self.id:
-                continue
+        if sender not in self.neighbors:
+            self.neighbors.append(sender)
+        
+        # calculate DV (neighbor DVs changed)
+        new_dv = { node : (0, [node]) for node in self.distance_vector }
+        for node in new_dv:
+            cost, path = self.get_next_hop(node)
+            new_dv[node] = (cost, path)
 
-            if node not in self.distance_vectors or (received_cost + link_cost) < self.distance_vectors[node][0]:
-                no_changes = False
-                self.distance_vectors[node] = (received_cost + link_cost, self.get_full_path(node))  
-                
-        # if any changes, send msg
-        print(self.distance_vectors[origin])
-        if not no_changes or (origin in self.distance_vectors and self.id in self.distance_vectors[origin][1]):
+        # if new_dv != self.distance_vector, send your DV out
+        if new_dv != self.distance_vector:
+            self.distance_vector = new_dv
             msg_body = {
                 "sender": self.id,
-                "origin": origin,
-                "DV": self.distance_vectors,
-                "timestamp": timestamp,
-                "neighbor": neighbor,
-                "latency": latency
+                "sent_dv": self.distance_vector,
+                "timestamp": self.get_time(),
+                "deleted_link": None
             }
+            
             msg_to_send = json.dumps(msg_body)
             self.send_to_neighbors(msg_to_send)
 
     # Return a neighbor, -1 if no path to destination
     def get_next_hop(self, destination):
         dsts, prvs = self.shortest_path()
-        if destination not in dsts or dsts[destination] == float('inf'):
+        if destination not in dsts:
             return -1
-        
-        curr = destination
-        while prvs[curr] != self.id:
-            curr = prvs[curr]
-        return curr
-    
-    def get_full_path(self, destination):
-        dsts, prvs = self.shortest_path()
-        if destination not in dsts or dsts[destination] == float('inf'):
-            print("get full path")
-            return []
         
         path = []
         curr = destination
-        while prvs[curr] != self.id:
+        while prvs[curr] != curr:
             path.append(curr)
             curr = prvs[curr]
-        path.append(curr)
-        if path == None:
-            print("FAIFOEIJOJFSOEIJOIFEIJSF")
-        return path[::-1]
+        path.append(self.id)
 
-    # Bellman-Ford
+        return dsts[destination], path[::-1]
+    
+    # Bellman-Ford - self.outbound_links and self.neighbor_DVs
     def shortest_path(self):
         dsts = {}
         prvs = {}
 
-        source = self.id
-        vertices = self.distance_vectors.keys()
-
+        vertices = self.distance_vector.keys()
         for vertex in vertices:
             dsts[vertex] = float('inf')
             prvs[vertex] = None
-        
-        dsts[source] = 0
 
-        for _ in range(len(vertices) - 1):
-            for edge in self.edges:
-                src, dst = tuple(edge)
-                alt = dsts[src] + self.edges[edge]
-                if alt < dsts[dst]:
-                    dsts[dst] = alt
-                    prvs[dst] = src
-        
+        dsts[self.id] = 0
+
+        for vertex in vertices:
+            min_cost = self.distance_vector[vertex][0]
+            path = self.distance_vector[vertex][1]
+            if len(path) == 1:
+                min_neighbor = vertex
+            else:
+                min_neighbor = path[0]
+
+            for neighbor in self.neighbors:
+                print(self.neighbor_DVs[neighbor])
+                new_cost = self.outbound_links[neighbor] + self.neighbor_DVs[neighbor][1][vertex][0]
+                if new_cost < min_cost:
+                    min_cost = new_cost
+                    min_neighbor = neighbor
+                    
+            dsts[vertex] = min_cost
+            prvs[vertex] = min_neighbor
+
         return dsts, prvs
-    """
-    INPUTS: vertices, edges, and source
-    
-    // Initialization
-    for each vertex v in vertices:
-        dist[v] := INFINITY      // Initially, vertices have infinite weight
-        prev[v] := NULL          // and a null predecessor.
-    dist[source] := 0            // Distance from source to itself is zero
-    
-    // Relax edges repeatedly.
-    for i from 1 to size(vertices)-1:
-        for each edge (u,v):
-            alt := dist[u] + (u,v).cost() 
-            if alt < dist[v]:
-                dist[v] := alt
-                prev[v] := u
-    
-    // outputs are distance and predecessor arrays   
-    return dist[], prev[]
-    """
