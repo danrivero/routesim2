@@ -7,8 +7,9 @@ class Distance_Vector_Node(Node):
         super().__init__(id)
         self.distance_vectors = {} # key: neighbor (int), val: (cost, next_hop) 
         self.edges = {} # key: (src, dst) (tuple of ints), val: cost (int)
-        self.all_dvs = {} # key: neighbor (int), val: neighbor's DV 
-        self.distance_vectors[self.id] = (0, None)
+        self.all_dvs = {} # key: neighbor (int), val: (timestamp, neighbor's DV)
+        self.timestamp = 0
+        self.distance_vectors[self.id] = (0, [])
 
     # Return a string
     def __str__(self):
@@ -38,12 +39,13 @@ class Distance_Vector_Node(Node):
 
         edge = frozenset({self.id, neighbor})
         self.edges[edge] = latency
-        self.distance_vectors[neighbor] = (latency, neighbor)
+        self.distance_vectors[neighbor] = (latency, [neighbor])
 
         msg_body = {
             "sender": self.id,
             "origin": self.id,
             "DV": self.distance_vectors,
+            "timestamp": self.get_time(),
             "neighbor": neighbor,
             "latency": latency
         }
@@ -62,16 +64,23 @@ class Distance_Vector_Node(Node):
         DV = {int(k): v for k, v in msg["DV"].items()}
         neighbor = msg["neighbor"]
         latency = msg["latency"]
+        timestamp = msg["timestamp"]
 
         # if we're receiving a neighbor's DV, store it
         # if (sender == origin or origin in self.neighbors) and (origin in self.neighbor_dvs and DV != self.neighbor_dvs[origin]):
-        if origin not in self.all_dvs or self.all_dvs[origin] != DV:
+        if sender not in self.all_dvs or self.all_dvs[sender][1] != DV or timestamp > self.all_dvs[sender][0]:
+            if sender not in self.all_dvs:
+                1+1
+            elif self.all_dvs[sender][1] != DV:
+                print("start")
+                print(DV)
+                print(self.all_dvs[sender])
             no_changes = False
-            self.all_dvs[origin] = DV
+            self.all_dvs[sender] = (timestamp, DV)
 
         # check if its a neighbor (before for loop), set its cost in self.distance_vectors immediately
         if sender in self.neighbors:
-            self.distance_vectors[sender] = (self.edges[frozenset({self.id, sender})], sender)
+            self.distance_vectors[sender] = (self.edges[frozenset({self.id, sender})], [sender])
         
         # check if there are changes
         # edge = frozenset({origin, neighbor})
@@ -100,14 +109,16 @@ class Distance_Vector_Node(Node):
 
             if node not in self.distance_vectors or (received_cost + link_cost) < self.distance_vectors[node][0]:
                 no_changes = False
-                self.distance_vectors[node] = (received_cost + link_cost, sender)  
+                self.distance_vectors[node] = (received_cost + link_cost, self.get_full_path(node))  
                 
-        # if any changes, send msg 
-        if not no_changes:
+        # if any changes, send msg
+        print(self.distance_vectors[origin])
+        if not no_changes or (origin in self.distance_vectors and self.id in self.distance_vectors[origin][1]):
             msg_body = {
                 "sender": self.id,
                 "origin": origin,
                 "DV": self.distance_vectors,
+                "timestamp": timestamp,
                 "neighbor": neighbor,
                 "latency": latency
             }
@@ -121,11 +132,25 @@ class Distance_Vector_Node(Node):
             return -1
         
         curr = destination
-        print(self.id)
-        print(destination)
         while prvs[curr] != self.id:
             curr = prvs[curr]
         return curr
+    
+    def get_full_path(self, destination):
+        dsts, prvs = self.shortest_path()
+        if destination not in dsts or dsts[destination] == float('inf'):
+            print("get full path")
+            return []
+        
+        path = []
+        curr = destination
+        while prvs[curr] != self.id:
+            path.append(curr)
+            curr = prvs[curr]
+        path.append(curr)
+        if path == None:
+            print("FAIFOEIJOJFSOEIJOIFEIJSF")
+        return path[::-1]
 
     # Bellman-Ford
     def shortest_path(self):
@@ -134,7 +159,6 @@ class Distance_Vector_Node(Node):
 
         source = self.id
         vertices = self.distance_vectors.keys()
-        print(f"these are the vertices of {source}: {vertices}")
 
         for vertex in vertices:
             dsts[vertex] = float('inf')
