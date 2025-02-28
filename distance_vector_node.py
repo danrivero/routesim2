@@ -7,7 +7,7 @@ class Distance_Vector_Node(Node):
         super().__init__(id)
         self.distance_vectors = {} # key: neighbor (int), val: (cost, next_hop) 
         self.edges = {} # key: (src, dst) (tuple of ints), val: cost (int)
-        self.neighbor_dvs = {} # key: neighbor (int), val: neighbor's DV 
+        self.all_dvs = {} # key: neighbor (int), val: neighbor's DV 
         self.distance_vectors[self.id] = (0, None)
 
     # Return a string
@@ -38,6 +38,7 @@ class Distance_Vector_Node(Node):
 
         edge = frozenset({self.id, neighbor})
         self.edges[edge] = latency
+        self.distance_vectors[neighbor] = (latency, neighbor)
 
         msg_body = {
             "sender": self.id,
@@ -58,46 +59,48 @@ class Distance_Vector_Node(Node):
         # extract headers from msg
         sender = msg["sender"] 
         origin = msg["origin"]
-        DV = msg["DV"]
+        DV = {int(k): v for k, v in msg["DV"].items()}
         neighbor = msg["neighbor"]
         latency = msg["latency"]
 
         # if we're receiving a neighbor's DV, store it
-        if (sender == origin or origin in self.neighbors) and (origin in self.neighbor_dvs and DV != self.neighbor_dvs[origin]):
+        # if (sender == origin or origin in self.neighbors) and (origin in self.neighbor_dvs and DV != self.neighbor_dvs[origin]):
+        if origin not in self.all_dvs or self.all_dvs[origin] != DV:
             no_changes = False
-            self.neighbor_dvs[origin] = DV
-        
-        # check if there are changes
-        edge = frozenset({origin, neighbor})
-        if edge not in self.edges or self.edges[edge] != latency:
-            no_changes = False
-            self.edges[edge] = latency
+            self.all_dvs[origin] = DV
 
         # check if its a neighbor (before for loop), set its cost in self.distance_vectors immediately
         if sender in self.neighbors:
-            self.distance_vectors[sender] = (latency, neighbor)
+            self.distance_vectors[sender] = (self.edges[frozenset({self.id, sender})], sender)
+        
+        # check if there are changes
+        # edge = frozenset({origin, neighbor})
+        # if edge not in self.edges or self.edges[edge] != latency:
+        #     no_changes = False
+        #     self.edges[edge] = latency
 
         for node in DV:
             # case 1: node not in self's DV
-            if node not in self.distance_vectors:
-                no_changes = False
-                self.distance_vectors[node] = (DV[node][0] + latency, self.get_next_hop(node))
-                # if node == sender:
-                #     self.distance_vectors[node] = (DV[node][0] + latency, self.get_next_hop(node))
-                # else:
-                #     self.distance_vectors[node] = (DV[node][0] + self.distance_vectors[sender][0], self.get_next_hop(node))
+            # if node not in self.distance_vectors:
+            #     no_changes = False
+            #     self.distance_vectors[node] = (DV[node][0] + latency, self.get_next_hop(node))
                 
             # case 2: potential path is shorter than current one in self's DV
-            print(node)
-            print(sender)
-            potential_path = DV[node][0] + self.distance_vectors[sender][0]
-            if potential_path < self.distance_vectors[node][0]:
-                no_changes = False
-                self.distance_vectors[node] = (potential_path, sender)
+            # print(node)
+            # print(sender)
+            # potential_path = DV[node][0] + self.distance_vectors[sender][0]
+            # if potential_path < self.distance_vectors[node][0]:
+            #     no_changes = False
+            #     self.distance_vectors[node] = (potential_path, sender)   
+            received_cost = DV[node][0]
+            link_cost = self.edges.get(frozenset({self.id, sender}), float('inf'))
 
-            
-            
-            
+            if node == self.id:
+                continue
+
+            if node not in self.distance_vectors or (received_cost + link_cost) < self.distance_vectors[node][0]:
+                no_changes = False
+                self.distance_vectors[node] = (received_cost + link_cost, sender)  
                 
         # if any changes, send msg 
         if not no_changes:
