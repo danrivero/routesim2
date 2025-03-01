@@ -8,7 +8,6 @@ class Link_State_Node(Node):
         super().__init__(id)
         self.router_graph = {} # adj matrix - key: (src, dst) -> val: cost
         self.node_messages = {} # key: node id, val: seq num
-        self.adj_list = {} # key: node (int), val: list of nodes (ints)
         self.seq_num = 0
 
     # Return a string
@@ -27,14 +26,14 @@ class Link_State_Node(Node):
             if neighbor in self.neighbors:
                 self.neighbors.remove(neighbor)
 
-            self.router_graph.pop(f"{self.id},{neighbor}", None)
-            self.router_graph.pop(f"{neighbor},{self.id}", None)
+            self.router_graph.pop(frozenset((neighbor, self.id)), None)
 
             msg_body = {
-                "router_graph": self.router_graph,
+                "router_graph": {json.dumps(list(key)): value for key, value in self.router_graph.items()},
                 "origin": self.id,
                 "seq_num": self.seq_num,
-                "deleted_link": f"{self.id},{neighbor}"
+                "deleted_src": self.id,
+                "deleted_dst": neighbor
             }
 
             self.seq_num += 1
@@ -45,11 +44,12 @@ class Link_State_Node(Node):
         if neighbor not in self.neighbors:
             self.neighbors.append(neighbor)
 
-        self.router_graph[f"{self.id},{neighbor}"] = latency
-        self.router_graph[f"{neighbor},{self.id}"] = latency
+        edge = frozenset((self.id, neighbor))
+
+        self.router_graph[edge] = latency
 
         msg_body = {
-            "router_graph": self.router_graph,
+            "router_graph": {json.dumps(list(key)): value for key, value in self.router_graph.items()},
             "origin": self.id,
             "seq_num": self.seq_num
         }
@@ -62,37 +62,40 @@ class Link_State_Node(Node):
     def process_incoming_routing_message(self, m):
         # when receiving updated info, forward it to all neighbors
         msg = json.loads(m)
-        routing_table = msg["router_graph"]
+        routing_table = {frozenset(json.loads(key)): value for key, value in msg["router_graph"].items()}
         origin = msg["origin"]
         seq_num = msg["seq_num"]
 
+        # if the message is old, discard
         if origin in self.node_messages and seq_num <= self.node_messages[origin]:
             return
         self.node_messages[origin] = seq_num
 
-        if "deleted_link" in msg:
-            edge = msg["deleted_link"]
-            src, dst = map(int, edge.split(","))
-            if f"{src},{dst}" in self.router_graph and f"{dst},{src}" in self.router_graph:
-                del self.router_graph[f"{src},{dst}"]
-                del self.router_graph[f"{dst},{src}"]
+        if "deleted_src" in msg:
+            edge = frozenset((msg["deleted_src"], msg["deleted_dst"]))
+            if edge in self.router_graph:
+                self.router_graph.pop(edge, None)
 
             msg_body = {
-                "router_graph": self.router_graph,
+                "router_graph": {json.dumps(list(key)): value for key, value in self.router_graph.items()},
                 "origin": origin,
                 "seq_num": seq_num,
-                "deleted_link": edge
+                "deleted_src": msg["deleted_src"],
+                "deleted_dst": msg["deleted_dst"]
             }
             send = json.dumps(msg_body)
             self.send_to_neighbors(send)
             return
 
-        prev_graph_state = self.router_graph.copy()
-        self.router_graph.update(routing_table)
+        changes = False
+        for edge in routing_table:
+            if edge not in self.router_graph or (edge in self.router_graph and self.router_graph[edge] != routing_table[edge]):
+                self.router_graph[edge] = routing_table[edge]
+                changes = True
 
-        if prev_graph_state != self.router_graph and origin != self.id:
+        if changes:
             msg_body = {
-                "router_graph": self.router_graph,
+                "router_graph": {json.dumps(list(key)): value for key, value in self.router_graph.items()},
                 "origin": origin,
                 "seq_num": seq_num
             }
@@ -118,7 +121,7 @@ class Link_State_Node(Node):
         # create list of vertices
         vertices = set()
         for edge in self.router_graph:
-            src, dst = map(int, edge.split(","))
+            src, dst = edge
             vertices.add(src)
             vertices.add(dst)
 
@@ -140,14 +143,14 @@ class Link_State_Node(Node):
             # get all neighbors of vertex
             min_neighbors = set()
             for edge in self.router_graph:
-                src, dst = map(int, edge.split(","))
+                src, dst = edge
                 if src == min_vertex:
                     min_neighbors.add(dst)
                 elif dst == min_vertex:
                     min_neighbors.add(src)
             
             for neighbor in min_neighbors:
-                alt = dsts[min_vertex] + self.router_graph[f"{min_vertex},{neighbor}"]
+                alt = dsts[min_vertex] + self.router_graph[frozenset((min_vertex, neighbor))]
                 if alt < dsts[neighbor]:
                     dsts[neighbor] = alt
 
